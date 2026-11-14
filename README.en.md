@@ -16,6 +16,8 @@
 
 ![NextSeat](assets/cover.png)
 
+<p align="center"><a href="https://github.com/Azhu9701/dsh-nearby/releases/download/v0.6.0/dsh-nearby-intro.mp4">▶ Watch the 86-second intro</a> · <a href="https://github.com/Azhu9701/dsh-nearby/releases">Release notes</a></p>
+
 ## Why NextSeat
 
 Everything you make in DSH lives on your own computer. Then someone next to you says "send it to me" — and suddenly you are adding them on WeChat, uploading to a drive, or hunting for a USB stick. A face-to-face share takes a detour through three apps.

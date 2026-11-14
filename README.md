@@ -16,6 +16,8 @@
 
 ![NextSeat](assets/cover.png)
 
+<p align="center"><a href="https://github.com/Azhu9701/dsh-nearby/releases/download/v0.6.0/dsh-nearby-intro.mp4">▶ 看 86 秒介绍视频</a> · <a href="https://github.com/Azhu9701/dsh-nearby/releases">版本说明</a></p>
+
 ## 为什么是邻座
 
 在 DSH 里做出来的东西，全都躺在你自己的电脑上。旁边的人说「发我一份」——然后你开始加微信、传网盘、找 U 盘，一次面对面的分享，绕了三个软件。
