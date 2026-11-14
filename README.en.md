@@ -45,6 +45,8 @@ NextSeat shrinks it to one step: **open a room and hand over the QR code.**
 
 ## Quick start
 
+Requirements: DeepSeek Harness (desktop), Node.js 20+, and the host and guests on the same Wi-Fi (unless using remote mode).
+
 ```sh
 # Install (DeepSeek Harness required)
 dsh plugin --profile web add github:Azhu9701/dsh-nearby

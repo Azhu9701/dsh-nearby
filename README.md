@@ -45,6 +45,8 @@
 
 ## 快速开始
 
+环境要求：DeepSeek Harness（桌面端）、Node.js ≥ 20；宿主与访客在同一 Wi-Fi（远程模式除外）。
+
 ```sh
 # 安装（需要已安装 DeepSeek Harness）
 dsh plugin --profile web add github:Azhu9701/dsh-nearby
