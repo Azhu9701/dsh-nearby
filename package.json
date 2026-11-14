@@ -1,0 +1,50 @@
+{
+  "name": "@local/dsh-nearby",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "description": "邻座 NextSeat：同一 Wi-Fi 下的临时分享房间（文件 / 提示词卡片 / 技能包），带就近自动发现。",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "guest.html",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "vendor/qrcode.cjs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Azhu9701/dsh-nearby"
+  },
+  "homepage": "https://github.com/Azhu9701/dsh-nearby#readme",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "file-sharing",
+    "lan",
+    "prompt-cards",
+    "skills",
+    "nearby"
+  ]
+}
