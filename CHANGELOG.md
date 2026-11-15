@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1 — 2026-11-15
+
+- Publish to npm as `dsh-nearby` (the package is no longer private).
+- `dsh plugin --profile web add dsh-nearby` is now the primary install command.
+- Declare `engines.dsh` so the plugin market can match supported DSH versions.
+
 ## 0.6.0 — 2026-11-14
 
 First public release.

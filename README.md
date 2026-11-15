@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-37E3B5.svg)](LICENSE)
 [![DSH Plugin](https://img.shields.io/badge/DSH-plugin-0A0F0E.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![Version](https://img.shields.io/badge/version-0.6.0-37E3B5.svg)](https://github.com/Azhu9701/dsh-nearby/releases)
+[![Version](https://img.shields.io/badge/version-0.6.1-37E3B5.svg)](https://github.com/Azhu9701/dsh-nearby/releases)
 
 [中文](README.md) · [English](README.en.md)
 
@@ -49,7 +49,7 @@
 
 ```sh
 # 安装（需要已安装 DeepSeek Harness）
-dsh plugin --profile web add github:Azhu9701/dsh-nearby
+dsh plugin --profile web add dsh-nearby
 ```
 
 装好后按提示重载（或点侧栏刷新按钮），侧栏出现「邻座」面板。

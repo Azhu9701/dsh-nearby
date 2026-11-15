@@ -6,7 +6,7 @@
  * into the local prompt library.
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-nearby',
+  id: 'dsh-nearby',
   factory(require) {
     const React = require('react')
     const { useCallback, useEffect, useRef, useState } = React

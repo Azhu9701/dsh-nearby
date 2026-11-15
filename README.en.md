@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-37E3B5.svg)](LICENSE)
 [![DSH Plugin](https://img.shields.io/badge/DSH-plugin-0A0F0E.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![Version](https://img.shields.io/badge/version-0.6.0-37E3B5.svg)](https://github.com/Azhu9701/dsh-nearby/releases)
+[![Version](https://img.shields.io/badge/version-0.6.1-37E3B5.svg)](https://github.com/Azhu9701/dsh-nearby/releases)
 
 [中文](README.md) · [English](README.en.md)
 
@@ -49,7 +49,7 @@ Requirements: DeepSeek Harness (desktop), Node.js 20+, and the host and guests o
 
 ```sh
 # Install (DeepSeek Harness required)
-dsh plugin --profile web add github:Azhu9701/dsh-nearby
+dsh plugin --profile web add dsh-nearby
 ```
 
 Reload when prompted (or press the refresh button in the sidebar), then open the **NextSeat** panel.

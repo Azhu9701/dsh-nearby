@@ -1,3 +1,3 @@
 - insert:
     - id: dsh-nearby
-      name: '@local/dsh-nearby'
+      name: 'dsh-nearby'
