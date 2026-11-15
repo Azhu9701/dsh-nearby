@@ -50,6 +50,9 @@
 ```sh
 # 安装（需要已安装 DeepSeek Harness）
 dsh plugin --profile web add dsh-nearby
+
+# 也可以直接从 GitHub 安装
+dsh plugin --profile web add github:Azhu9701/dsh-nearby
 ```
 
 装好后按提示重载（或点侧栏刷新按钮），侧栏出现「邻座」面板。

@@ -50,6 +50,9 @@ Requirements: DeepSeek Harness (desktop), Node.js 20+, and the host and guests o
 ```sh
 # Install (DeepSeek Harness required)
 dsh plugin --profile web add dsh-nearby
+
+# Or install straight from GitHub
+dsh plugin --profile web add github:Azhu9701/dsh-nearby
 ```
 
 Reload when prompted (or press the refresh button in the sidebar), then open the **NextSeat** panel.
