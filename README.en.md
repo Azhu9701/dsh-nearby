@@ -98,8 +98,9 @@ Example: ask the agent to "open a room and share this skill with the people here
 
 ## Security & privacy
 
-- **Private-network gate**: only private sources by default (127/10/172.16-31/192.168/169.254/ULA/link-local); public IPs are rejected.
-- **Token auth**: each room uses a 32-byte random token; host mutation endpoints additionally require a custom header to block cross-site simple requests.
+- **Host routes go through DSH's access check**: every `/dsh-nearby/api/*` route asks `connection.requestRejection` first, the same gate DSH's own pages use — the Host/Origin fence defeats DNS rebinding and cross-site calls, and only a browser session (or API credential) gets through. On an older host without that service the layer is skipped.
+- **Private-network gate**: the guest page only accepts private sources by default (127/10/172.16-31/192.168/169.254/ULA/link-local); public IPs are rejected.
+- **Token auth**: each room uses a 32-byte random token; host mutation endpoints additionally require a custom header as a second layer behind the access check.
 - **Filename sanitising**: uploads are sanitised; skill zips are checked for absolute paths, `..` and symlinks before install.
 - **Local storage**: everything lands under `~/.dsh/storages/dsh_nearby/` on the host; delete it whenever you like.
 - **Boundary**: LAN traffic is plain HTTP, no end-to-end encryption; use it on trusted networks only. Do not post a public tunnel link in a public group.

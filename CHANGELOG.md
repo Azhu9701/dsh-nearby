@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.2 — 2026-11-17
+
+Adopts the plugin-directory publishing contract, following `dsh-plugin-share`.
+
+- **Host routes now go through DSH's access check.** Every `/dsh-nearby/api/*` route calls `connection.requestRejection` before touching any state, so the Host/Origin fence (DNS rebinding, cross-site calls) and browser authentication apply. Skipped automatically on hosts that do not expose `connection`.
+- Declare `peerDependencies` on `@deepseek-ai/dsh-client-ui-conversation` (`>=0.2.0-rc.1 <0.3.0-0`) so the version gate can refuse an incompatible runtime.
+- Ship `README.md`, `README.en.md`, `CHANGELOG.md`, `screenshots.json` and `assets/` inside the published package.
+- Add `screenshots.json` (market screenshot declaration) and `test/manifest.test.mjs` pinning the publishing contract; CI now runs the tests and verifies the packed tarball.
+
 ## 0.6.1 — 2026-11-15
 
 - Publish to npm as `dsh-nearby` (the package is no longer private).

@@ -17,11 +17,22 @@ jobs:
         run: |
           node --check index.js
           node --check client.js
-      - name: Validate package manifest
+      # The manifest, screenshot list and the host-route trust fence are all
+      # submission surfaces: the catalog reads them from this repository, and a
+      # regression in one of them does not break any other check. test/ pins
+      # them, so the suite runs before the pack smoke test.
+      - name: Contract tests
+        run: node --test test/*.test.mjs
+      - name: Packed tarball carries the patch and the client half
         run: |
-          node -e "const p=require('./package.json'); if(!p.dsh||!p.dsh.bundle||!p.dsh.bundle.patch) throw new Error('missing dsh.bundle.patch'); if(!p.dsh.client||p.dsh.client.platform!=='web') throw new Error('missing dsh.client'); console.log('package.json ok', p.name, p.version)"
-      - name: Validate locale files
-        run: |
-          node -e "for (const f of ['locale/zh.json','locale/en.json']) { const j=require('./'+f); if(!j.meta||!j.meta.title) throw new Error(f+' missing meta.title'); } console.log('locale ok')"
-      - name: Check guest page is present
-        run: test -s guest.html
+          set -euo pipefail
+          tarball=$(npm pack --silent --pack-destination /tmp)
+          echo "packed: $tarball"
+          tar -tzf "/tmp/$tarball" > /tmp/pack-files.txt
+          for want in package/cordis.patch.yml package/client.js package/index.js package/guest.html package/screenshots.json; do
+            grep -qx "$want" /tmp/pack-files.txt || { echo "missing from tarball: $want"; exit 1; }
+          done
+          if grep -q '^package/test/' /tmp/pack-files.txt; then
+            echo "test/ should not be published"; exit 1
+          fi
+          echo "tarball ok"

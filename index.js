@@ -1888,6 +1888,43 @@ function hostHeaderOk(req) {
   return req.headers['x-dsh-nearby'] === '1'
 }
 
+/**
+ * Ask the composition's own trust fence before touching anything.
+ *
+ * `webServer.register` hands out a route with no caller check, so any local
+ * process — or a cross-site request from a page the user happens to have open —
+ * could drive it. `connection.requestRejection` is the check DSH already runs
+ * for its own API: its Host/Origin fence defeats DNS rebinding and cross-site
+ * calls, and its browser authentication covers the login token. It answers
+ * 401/403, or undefined for a request it would admit.
+ *
+ * Hosts older than that service simply do not publish it, and then every route
+ * behaves exactly as before — the caller header below stays as a second,
+ * cheap fence for the mutating endpoints.
+ *
+ * @returns true when the request was refused and the response is already owned.
+ */
+function hostRejection(ctx, req, res) {
+  let connection
+  try {
+    connection = typeof ctx.get === 'function' ? ctx.get('connection') : undefined
+  } catch {
+    return false
+  }
+  const gate = connection && connection.requestRejection
+  if (typeof gate !== 'function') return false
+  let rejection
+  try {
+    rejection = gate.call(connection, req)
+  } catch {
+    return false
+  }
+  if (rejection === undefined) return false
+  res.statusCode = rejection
+  res.end()
+  return true
+}
+
 async function hostState(req, res) {
   if (req.method !== 'GET') {
     sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
@@ -2434,6 +2471,7 @@ export function apply(ctx) {
         kind: 'exact',
         path,
         handler: (req, res) => {
+          if (hostRejection(ctx, req, res)) return
           Promise.resolve(handler(req, res)).catch(() => {
             try {
               sendJson(res, 500, { ok: false, error: 'handler-failed' })

@@ -15,6 +15,7 @@ Include the version, the platform, and a minimal reproduction. Please avoid incl
 
 ## Known boundaries
 
+- Host routes (`/dsh-nearby/api/...`) sit behind DSH's own access check (`connection.requestRejection`: Host/Origin fence plus browser session). The guest page and its `/api/room/...` API are served by the plugin's own LAN listener and are gated by the room token plus the private-network rule instead.
 - LAN traffic is plain HTTP; there is no end-to-end encryption.
 - A room token is a bearer credential: anyone with the full link can join while the room is open.
 - Public tunnel mode exposes the room beyond the local network; treat the link as a secret.
