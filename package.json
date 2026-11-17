@@ -1,6 +1,6 @@
 {
   "name": "dsh-nearby",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "type": "module",
   "description": "邻座 NextSeat：同一 Wi-Fi 下的临时分享房间（文件 / 提示词卡片 / 技能包），带就近自动发现。",
   "exports": {

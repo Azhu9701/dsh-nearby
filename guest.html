@@ -330,7 +330,7 @@
 
     var ico = document.createElement('div');
     ico.className = 'ico';
-    ico.textContent = it.kind === 'file' ? '▤' : it.kind === 'note' ? '“' : it.kind === 'skill' ? '⌘' : '✎';
+    ico.textContent = it.kind === 'file' ? '▤' : it.kind === 'note' ? '“' : it.kind === 'skill' ? '⌘' : it.kind === 'pack' ? '⊕' : '✎';
     row.appendChild(ico);
 
     var bd = document.createElement('div');
@@ -432,6 +432,33 @@
       a3.setAttribute('download', '');
       acts3.appendChild(a3);
       bd.appendChild(acts3);
+    } else if (it.kind === 'pack') {
+      var pk = it.pack || {};
+      var pl = document.createElement('div');
+      pl.className = 'prev';
+      pl.textContent = ((pk.names || []).join(' · ') || '（空插件包）').slice(0, 300);
+      bd.appendChild(pl);
+      var ph = document.createElement('div');
+      ph.className = 'prev';
+      ph.textContent = '装了 DSH 的人：复制这串码，在「邻座」面板里粘进去，一键装回这些插件。';
+      bd.appendChild(ph);
+      var acts4 = document.createElement('div');
+      acts4.className = 'acts';
+      var pbtn = document.createElement('button');
+      pbtn.className = 'ghost';
+      pbtn.textContent = '复制插件码';
+      pbtn.onclick = function () {
+        var code = pk.code || '';
+        if (!code) { toast('这串码不在这条里'); return; }
+        var done = function () { toast('插件码已复制'); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(code).then(done, function () { toast('复制失败，请长按选择'); });
+        } else {
+          toast('这个浏览器不让复制，请用 DSH 面板里的「收别人的」');
+        }
+      };
+      acts4.appendChild(pbtn);
+      bd.appendChild(acts4);
     } else if (it.kind === 'file') {
       var acts2 = document.createElement('div');
       acts2.className = 'acts';

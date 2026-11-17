@@ -18,6 +18,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
+import { deflateRawSync, inflateRawSync } from 'node:zlib'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const requireCjs = createRequire(import.meta.url)
@@ -214,6 +215,36 @@ function clamp(n, lo, hi) {
   return Math.min(hi, Math.max(lo, Math.round(v)))
 }
 
+/** ChangeResult.error 里的标识符翻成一句人话。 */
+const INSTALL_ERROR_TEXT = {
+  'operation-error': '装不上（可能包名写错、网络不通，或这个版本不在插件市场里）',
+  'incompatible-version': '这个插件要求的 DSH 版本和本机不一样',
+  'unsupported-platform': '这个插件不支持这台机器',
+  'unexpected-package': '这个包不是 DSH 插件',
+  'not-found': '在插件市场里找不到这个包',
+  'approval-required': '需要在插件页手动确认一次',
+}
+function errText(err) {
+  if (!err) return ''
+  if (typeof err === 'string') return INSTALL_ERROR_TEXT[err] || err
+  if (err instanceof Error) return INSTALL_ERROR_TEXT[err.message] || err.message || err.name || 'error'
+  if (typeof err === 'object') {
+    for (const key of ['message', 'error', 'reason', 'detail', 'code']) {
+      const v = err[key]
+      if (typeof v === 'string' && v) return INSTALL_ERROR_TEXT[v] || v
+      if (v instanceof Error && v.message) return INSTALL_ERROR_TEXT[v.message] || v.message
+    }
+    try {
+      const s = JSON.stringify(err)
+      if (s && s !== '{}') return s.slice(0, 300)
+    } catch {
+      /* ignore */
+    }
+    return '安装失败（DSH 没有给出原因）'
+  }
+  return String(err)
+}
+
 function defaultHostName() {
   const h = String(hostname() || '').split('.')[0]
   return h || '主持人'
@@ -222,6 +253,7 @@ function defaultHostName() {
 function publicItem(it) {
   const card = it.card
   const skill = it.kind === 'skill' ? it.skill || {} : null
+  const pack = it.kind === 'pack' ? it.pack || {} : null
   const noteText = it.kind === 'note' ? String(it.text || '') : ''
   return {
     id: it.id,
@@ -234,7 +266,9 @@ function publicItem(it) {
           ? ''
           : it.kind === 'skill'
             ? skill.name || it.name
-            : it.name,
+            : it.kind === 'pack'
+              ? '插件包 · ' + (pack.count || 0) + ' 个插件'
+              : it.name,
     name: it.name || '',
     size: it.size || 0,
     sha256: it.sha256 ? it.sha256.slice(0, 16) : '',
@@ -245,10 +279,13 @@ function publicItem(it) {
       ? card.body.slice(0, 180)
       : it.kind === 'skill'
         ? String(skill.description || '').slice(0, 200)
-        : noteText.slice(0, 200),
+        : it.kind === 'pack'
+          ? (pack.names || []).slice(0, 12).join(' · ')
+          : noteText.slice(0, 200),
     text: it.kind === 'note' ? noteText.slice(0, 400) : '',
     truncated: it.kind === 'note' ? noteText.length > 400 : false,
     skill,
+    pack,
   }
 }
 
@@ -809,7 +846,7 @@ async function runCloudflareOnce(r, cfg, st) {
       })
     } catch (err) {
       st.state = 'failed'
-      st.error = 'cloudflared: ' + (err instanceof Error ? err.message : String(err))
+      st.error = 'cloudflared: ' + errText(err)
       finish(false)
       return
     }
@@ -1090,8 +1127,38 @@ function addNote(r, text, from) {
   return item
 }
 
+/**
+ * 把一串插件码当作房间条目放进去：别人在访客页点一下就能装回自己的 DSH。
+ * 码本身是纯文本，不执行、不联网，装不装由收的人自己按。
+ */
+function addPack(r, rawCode, from) {
+  if (r.items.length >= MAX_ITEMS) {
+    const err = new Error('room-full')
+    err.code = 'ROOM_FULL'
+    throw err
+  }
+  const parsed = decodePluginCode(rawCode)
+  const code = String(rawCode || '').trim()
+  const item = {
+    id: randomBytes(6).toString('hex'),
+    kind: 'pack',
+    dir: 'to-guests',
+    name: '',
+    at: Date.now(),
+    from: from || '主持人',
+    pack: {
+      code,
+      count: parsed.entries.length,
+      names: parsed.entries.map((e) => (e.version ? e.name + '@' + e.version : e.name)),
+      enabled: parsed.entries.filter((e) => e.enabled).length,
+    },
+  }
+  r.items.push(item)
+  return item
+}
+
 function fmtBytes(n) {
-  if (!n) return '0 B'
+  if (!Number.isFinite(n) || n <= 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB']
   let v = n
   let i = 0
@@ -1530,8 +1597,235 @@ async function installSkill(item) {
 }
 
 /* ------------------------------------------------------------------ */
-/* QR                                                                  */
+/* plugin packs: hand a set of plugins to the person next to you       */
 /* ------------------------------------------------------------------ */
+
+const PLUGIN_CODE_PREFIX = 'NSP1-'
+const MAX_PLUGIN_CODE_CHARS = 80_000
+const MAX_PLUGIN_ENTRIES = 120
+const PLUGIN_NAME_RE = /^(?:@[A-Za-z0-9!~*'()._-]+\/)?[A-Za-z0-9!~*'()._-]+$/
+const GITHUB_SPEC_RE = /^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#[^\s]+)?$/
+const LOCAL_SPEC_RE = /^(?:link:|file:|portal:|workspace:|https?:\/\/|git(?:\+https?)?:\/\/|git@|ssh:\/\/|\.{1,2}[\\/]|[A-Za-z]:[\\/])/i
+
+let pluginService = null
+/** 保留了宿主 ctx：插件包的导出/装回走 pluginManager，需要在 handler 里拿服务。 */
+let hostCtx = null
+
+function getPluginManager(ctx) {
+  if (pluginService) return pluginService
+  let service
+  try {
+    service = typeof ctx.get === 'function' ? ctx.get('pluginManager') : undefined
+  } catch {
+    service = undefined
+  }
+  if (service && typeof service.listBundles === 'function') pluginService = service
+  return pluginService || null
+}
+
+/** 一个包能不能被"别人照着装上"：必须是 npm 名或 github: spec。 */
+function portableSpec(entry) {
+  const name = String((entry && entry.name) || '').trim()
+  if (!name) return null
+  const version = String((entry && entry.version) || '').trim()
+  if (GITHUB_SPEC_RE.test(name)) return version ? name : name
+  if (!PLUGIN_NAME_RE.test(name)) return null
+  return version && !/\s/.test(version) ? `${name}@${version}` : name
+}
+
+function pluginEntry(rawName, rawVersion, enabled) {
+  const name = String(rawName || '').trim()
+  if (name.length > 200) return null
+  const isGithub = GITHUB_SPEC_RE.test(name)
+  if (!isGithub && !PLUGIN_NAME_RE.test(name)) return null
+  const version = String(rawVersion || '').trim()
+  if (version && (version.length > 128 || /[\s"'\\]/.test(version))) return null
+  return { name, version: version || '', enabled: enabled !== false }
+}
+
+/** 本机已装、且别人能照着装的插件。 */
+async function collectPlugins(ctx) {
+  const manager = getPluginManager(ctx)
+  if (!manager) return { available: false, entries: [], skipped: [] }
+  let bundles = []
+  try {
+    bundles = await manager.listBundles()
+  } catch {
+    return { available: false, entries: [], skipped: [] }
+  }
+  const entries = []
+  const skipped = []
+  for (const b of bundles) {
+    const name = String((b && b.name) || '')
+    if (!name) continue
+    if (b.installed !== true || b.removable === false) continue
+    const target = b.installTarget && typeof b.installTarget === 'object' ? b.installTarget : {}
+    const spec = String(target.spec || b.source || '')
+    const version = String(target.version || b.version || '')
+    if (!spec || LOCAL_SPEC_RE.test(spec)) {
+      skipped.push({ name, reason: 'not-portable' })
+      continue
+    }
+    const entry = pluginEntry(spec.startsWith('github:') ? spec : name, version, b.enabled !== false)
+    if (!entry) {
+      skipped.push({ name, reason: 'bad-name' })
+      continue
+    }
+    entries.push({
+      name: entry.name,
+      version: entry.version,
+      enabled: entry.enabled,
+      title: String(b.meta && b.meta.title ? b.meta.title : name),
+      description: String(b.description || '').slice(0, 160),
+    })
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name))
+  return { available: true, entries, skipped }
+}
+
+function encodePluginCode(entries) {
+  const payload = {
+    v: 1,
+    at: Date.now(),
+    items: entries.slice(0, MAX_PLUGIN_ENTRIES).map((e) => ({
+      n: e.name,
+      v: e.version || '',
+      e: e.enabled !== false ? 1 : 0,
+    })),
+  }
+  const body = deflateRawSync(Buffer.from(JSON.stringify(payload), 'utf8'), { level: 9 })
+  return PLUGIN_CODE_PREFIX + body.toString('base64url')
+}
+
+function decodePluginCode(raw) {
+  const fail = (message) => {
+    const err = new Error(message)
+    err.code = 'BAD_CODE'
+    return err
+  }
+  let text = String(raw || '').replace(/\s+/g, '')
+  if (!text) throw fail('插件码是空的')
+  if (text.length > MAX_PLUGIN_CODE_CHARS) throw fail('插件码太长了')
+  if (text.startsWith(PLUGIN_CODE_PREFIX)) text = text.slice(PLUGIN_CODE_PREFIX.length)
+  let json
+  try {
+    json = inflateRawSync(Buffer.from(text, 'base64url')).toString('utf8')
+  } catch {
+    throw fail('这串码读不出来，可能复制的时候少了几位')
+  }
+  let payload
+  try {
+    payload = JSON.parse(json)
+  } catch {
+    throw fail('这串码的内容坏了')
+  }
+  const items = Array.isArray(payload && payload.items) ? payload.items : []
+  const entries = []
+  const seen = new Set()
+  for (const it of items) {
+    const entry = pluginEntry(it && (it.n || it.name), it && (it.v || it.version), !(it && it.e === 0))
+    if (!entry || seen.has(entry.name)) continue
+    seen.add(entry.name)
+    entries.push(entry)
+  }
+  if (!entries.length) throw fail('这串码里没有可装的插件')
+  return { entries, at: Number(payload && payload.at) || 0 }
+}
+
+/** 码里的插件 vs 本机已装的：能装什么、跳过什么。 */
+async function previewPlugins(ctx, entries, wanted) {
+  const manager = getPluginManager(ctx)
+  const installed = new Map()
+  if (manager) {
+    try {
+      for (const b of await manager.listBundles()) {
+        if (b && b.name) installed.set(String(b.name), b)
+      }
+    } catch {
+      /* treat as empty */
+    }
+  }
+  const want = Array.isArray(wanted) && wanted.length ? new Set(wanted.map(String)) : null
+  const rows = []
+  for (const e of entries) {
+    if (want && !want.has(e.name)) continue
+    const have = installed.get(e.name)
+    if (!have || have.installed !== true) {
+      rows.push({
+        name: e.name,
+        version: e.version,
+        spec: portableSpec(e),
+        action: 'install',
+        note: e.version ? '装上 ' + e.version : '装上最新版',
+      })
+      continue
+    }
+    const haveVersion = String(have.version || '')
+    if (e.version && haveVersion && e.version !== haveVersion) {
+      rows.push({
+        name: e.name,
+        version: e.version,
+        spec: portableSpec(e),
+        action: 'manual-update',
+        note: '本机是 ' + haveVersion + '，码里是 ' + e.version + '（DSH 装包装不了更新，先在插件页升级）',
+      })
+      continue
+    }
+    if (e.enabled && have.enabled === false) {
+      rows.push({
+        name: e.name,
+        version: e.version,
+        spec: portableSpec(e),
+        action: 'enable',
+        note: '已装但被停用了，可以重新启用',
+      })
+      continue
+    }
+    rows.push({ name: e.name, version: e.version, spec: portableSpec(e), action: 'skip', note: '本机已经有了' })
+  }
+  return rows
+}
+
+/** 按预览结果逐个装；一个失败就停，返回每一步的结果。 */
+async function applyPlugins(ctx, rows, { enableOnly = false } = {}) {
+  const manager = getPluginManager(ctx)
+  if (!manager) {
+    const err = new Error('这台机器的 DSH 没有插件管理服务')
+    err.code = 'NO_MANAGER'
+    throw err
+  }
+  const done = []
+  for (const row of rows) {
+    if (row.action !== 'install' && row.action !== 'enable') continue
+    if (enableOnly && row.action !== 'enable') continue
+    try {
+      if (row.action === 'enable') {
+        await manager.setBundleEnabled(row.name, true)
+        done.push({ name: row.name, ok: true, action: 'enable', application: 'applied' })
+        continue
+      }
+      const result = await manager.installBundle(row.spec || row.name, { enabled: true })
+      done.push({
+        name: row.name,
+        ok: result && result.application !== 'failed',
+        action: 'install',
+        application: String((result && result.application) || 'applied'),
+        error: result && result.error ? errText(result.error) : '',
+      })
+    } catch (err) {
+      done.push({
+        name: row.name,
+        ok: false,
+        action: row.action,
+        application: 'failed',
+        error: errText(err),
+      })
+      break
+    }
+  }
+  const restart = done.some((d) => d.application === 'restart-required')
+  return { done, restart }
+}
 
 function qrDataUrl(text) {
   const qr = qrcode(0, 'M')
@@ -1982,7 +2276,7 @@ async function hostOpen(req, res) {
     sendJson(res, 500, {
       ok: false,
       error: 'open-failed',
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errText(err),
     })
   }
 }
@@ -2077,6 +2371,187 @@ async function hostNearby(req, res) {
     return
   }
   sendJson(res, 200, nearbySnapshot())
+}
+
+/* 插件包：导出 / 预览 / 装回 / 放进房间 */
+
+async function hostPlugins(req, res) {
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+  if (!hostHeaderOk(req)) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  try {
+    const out = await collectPlugins(hostCtx)
+    sendJson(res, 200, { ok: true, ...out })
+  } catch (err) {
+    sendJson(res, 500, { ok: false, error: 'list-failed', detail: String(err && err.message) })
+  }
+}
+
+async function hostExportPlugins(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+  if (!hostHeaderOk(req)) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  let body = {}
+  try {
+    body = await readJsonBody(req, 32 * 1024)
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'bad-request' })
+    return
+  }
+  try {
+    const all = await collectPlugins(hostCtx)
+    const want = Array.isArray(body.names) ? new Set(body.names.map(String)) : null
+    const picked = want ? all.entries.filter((e) => want.has(e.name)) : all.entries
+    if (!picked.length) {
+      sendJson(res, 400, { ok: false, error: '没选插件' })
+      return
+    }
+    const code = encodePluginCode(picked)
+    sendJson(res, 200, {
+      ok: true,
+      code,
+      count: picked.length,
+      chars: code.length,
+      names: picked.map((e) => (e.version ? e.name + '@' + e.version : e.name)),
+    })
+  } catch (err) {
+    sendJson(res, 500, { ok: false, error: 'export-failed', detail: String(err && err.message) })
+  }
+}
+
+/** 请求体里的插件码：直接给 code，或者给房间里某个插件包条目的 id。 */
+function packCodeFromBody(body) {
+  if (body && typeof body.code === 'string' && body.code.trim()) return body.code
+  if (body && body.id && room) {
+    const item = room.items.find((it) => it.id === body.id && it.kind === 'pack')
+    if (item && item.pack) return item.pack.code
+  }
+  return ''
+}
+
+async function hostPreviewPlugins(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+  if (!hostHeaderOk(req)) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  let body = {}
+  try {
+    body = await readJsonBody(req, 32 * 1024)
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'bad-request' })
+    return
+  }
+  const code = packCodeFromBody(body)
+  if (!code) {
+    sendJson(res, 400, { ok: false, error: '把插件码粘进来' })
+    return
+  }
+  let parsed
+  try {
+    parsed = decodePluginCode(code)
+  } catch (err) {
+    sendJson(res, 400, { ok: false, error: String(err && err.message) })
+    return
+  }
+  try {
+    const rows = await previewPlugins(hostCtx, parsed.entries, body.names)
+    sendJson(res, 200, {
+      ok: true,
+      count: parsed.entries.length,
+      at: parsed.at,
+      names: parsed.entries.map((e) => (e.version ? e.name + '@' + e.version : e.name)),
+      rows,
+    })
+  } catch (err) {
+    sendJson(res, 500, { ok: false, error: 'preview-failed', detail: String(err && err.message) })
+  }
+}
+
+async function hostApplyPlugins(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+  if (!hostHeaderOk(req)) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  let body = {}
+  try {
+    body = await readJsonBody(req, 32 * 1024)
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'bad-request' })
+    return
+  }
+  const code = packCodeFromBody(body)
+  if (!code) {
+    sendJson(res, 400, { ok: false, error: '把插件码粘进来' })
+    return
+  }
+  let parsed
+  try {
+    parsed = decodePluginCode(code)
+  } catch (err) {
+    sendJson(res, 400, { ok: false, error: String(err && err.message) })
+    return
+  }
+  try {
+    const rows = await previewPlugins(hostCtx, parsed.entries, body.names)
+    const out = await applyPlugins(hostCtx, rows, { enableOnly: body.enableOnly === true })
+    sendJson(res, 200, { ok: true, ...out })
+  } catch (err) {
+    if (err && err.code === 'NO_MANAGER') sendJson(res, 501, { ok: false, error: err.message })
+    else sendJson(res, 500, { ok: false, error: 'apply-failed', detail: String(err && err.message) })
+  }
+}
+
+/** 把插件码放进房间：在场的人打开访客页就能看到并装回。 */
+async function hostSharePack(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+  if (!hostHeaderOk(req)) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  if (!room) {
+    sendJson(res, 409, { ok: false, error: 'no-room' })
+    return
+  }
+  let body = {}
+  try {
+    body = await readJsonBody(req, 96 * 1024)
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'bad-request' })
+    return
+  }
+  if (typeof body.code !== 'string' || !body.code.trim()) {
+    sendJson(res, 400, { ok: false, error: '插件码是空的' })
+    return
+  }
+  try {
+    const item = addPack(room, body.code, room.hostName)
+    sendJson(res, 200, { ok: true, item: publicItem(item) })
+  } catch (err) {
+    const code = err && err.code
+    if (code === 'BAD_CODE' || code === 'EMPTY_PACK') sendJson(res, 400, { ok: false, error: err.message })
+    else sendJson(res, 507, { ok: false, error: '房间满了' })
+  }
 }
 
 async function hostNote(req, res) {
@@ -2239,7 +2714,7 @@ async function hostImport(req, res) {
     sendJson(res, 500, {
       ok: false,
       error: 'import-failed',
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errText(err),
     })
   }
 }
@@ -2351,7 +2826,7 @@ function buildTools() {
           try {
             await openRoom({ hostName: defaultHostName(), name: args.name, minutes: args.minutes })
           } catch (err) {
-            return { text: '开房失败：' + (err instanceof Error ? err.message : String(err)) }
+            return { text: '开房失败：' + errText(err) }
           }
           return {
             text: roomSummaryText(roomSnapshot()) + '\n把链接或二维码给对方，就能开始收了。',
@@ -2371,17 +2846,21 @@ function buildTools() {
     {
       name: 'nearby_share',
       description:
-        '往当前邻座房间里放东西，房间里所有人（手机浏览器）立刻能看到：kind=note 发一句话（text）；kind=card 放一张提示词卡片（title/tags/body）；kind=file 把本机一个文件放进房间（path）；kind=skill 把本机技能库里的一个技能打包放进房间（skill 传技能目录名或 name）。没有开房时先用 nearby_room 开一间。',
+        '往当前邻座房间里放东西，房间里所有人（手机浏览器）立刻能看到：kind=note 发一句话（text）；kind=card 放一张提示词卡片（title/tags/body）；kind=file 把本机一个文件放进房间（path）；kind=skill 把本机技能库里的一个技能打包放进房间（skill 传技能目录名或 name）；kind=pack 把本机已装插件导出成一串可分享的插件码放进房间（plugins 可选，空格/逗号分隔的插件名，不填就是全部可移植插件）。没有开房时先用 nearby_room 开一间。',
       parameters: {
         type: 'object',
         properties: {
-          kind: { type: 'string', enum: ['note', 'card', 'file', 'skill'] },
+          kind: { type: 'string', enum: ['note', 'card', 'file', 'skill', 'pack'] },
           text: { type: 'string', description: 'note 的正文，最多 2000 字' },
           title: { type: 'string', description: 'card 的标题' },
           tags: { type: 'string', description: 'card 的标签，用空格或逗号分开' },
           body: { type: 'string', description: 'card 的正文（提示词原文）' },
           path: { type: 'string', description: 'file 的本地路径，支持 ~/... 或绝对路径' },
           skill: { type: 'string', description: 'skill 的技能目录名或 name，比如 wechat-windows-viewer' },
+          plugins: {
+            type: 'string',
+            description: 'pack 要分享的插件名，用空格或逗号分开；不填就分享本机全部可移植插件',
+          },
         },
         required: ['kind'],
         additionalProperties: false,
@@ -2415,9 +2894,26 @@ function buildTools() {
               text: `技能包已放进房间：${item.skill.name}（${item.skill.files} 个文件，${fmtBytes(item.size)}）。别人下载后在 DSH 里解压到 ~/.dsh/skills/ 就能用。`,
             }
           }
-          return { text: 'kind 只能是 note / card / file / skill。' }
+          if (kind === 'pack') {
+            const all = await collectPlugins(hostCtx)
+            if (all.available === false) return { text: '这台机器的 DSH 没有插件管理服务，导不了插件包。' }
+            const wanted = String(args.plugins || '')
+              .split(/[\s,，]+/)
+              .filter(Boolean)
+            const picked = wanted.length
+              ? all.entries.filter((e) => wanted.includes(e.name))
+              : all.entries
+            if (!picked.length) return { text: '没找到能分享的插件：本地链接安装的插件别人装不了。' }
+            const code = encodePluginCode(picked)
+            const item = addPack(room, code, room.hostName)
+            const names = (item.pack.names || []).join(', ')
+            return {
+              text: `插件包已放进房间：${item.pack.count} 个插件（${code.length} 个字符）。\n${names}\n对方装了 DSH 的话，把这串码粘进邻座面板就能装回。`,
+            }
+          }
+          return { text: 'kind 只能是 note / card / file / skill / pack。' }
         } catch (err) {
-          return { text: '没放进去：' + (err instanceof Error ? err.message : String(err)) }
+          return { text: '没放进去：' + errText(err) }
         }
       },
     },
@@ -2448,6 +2944,7 @@ function buildTools() {
 export const inject = ['webServer', 'tools']
 
 export function apply(ctx) {
+  hostCtx = ctx
   const routes = [
     ['/dsh-nearby/api/state', hostState],
     ['/dsh-nearby/api/qr', hostQr],
@@ -2463,6 +2960,11 @@ export function apply(ctx) {
     ['/dsh-nearby/api/install-skill', hostInstallSkill],
     ['/dsh-nearby/api/import', hostImport],
     ['/dsh-nearby/api/file', hostFile],
+    ['/dsh-nearby/api/plugins', hostPlugins],
+    ['/dsh-nearby/api/export-plugins', hostExportPlugins],
+    ['/dsh-nearby/api/preview-plugins', hostPreviewPlugins],
+    ['/dsh-nearby/api/apply-plugins', hostApplyPlugins],
+    ['/dsh-nearby/api/share-pack', hostSharePack],
   ]
 
   for (const [path, handler] of routes) {

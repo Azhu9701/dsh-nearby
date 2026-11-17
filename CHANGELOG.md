@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.3 — 2026-11-17
+
+Share **plugins**, not just files — the thing the person next to you usually wants most.
+
+- **Plugin packs.** Tick the plugins you have installed, get one short code (`NSP1-…`, deflate + base64url), and put it in the room. People who run DSH paste it in the panel and install everything in one go.
+- Host endpoints `/dsh-nearby/api/{plugins,export-plugins,preview-plugins,apply-plugins,share-pack}`; entries installed from `link:`/`file:`/git/URLs are reported as not portable instead of silently dropped.
+- Nothing is installed without a preview: `apply-plugins` lists every row as install / enable / manual-update before anything runs, and stops at the first failure.
+- Guests without DSH still see the pack (plugin list + copy button); guests with DSH can copy the code from the phone page.
+- Room feed understands `pack` items in the panel and on the guest page.
+
 ## 0.6.2 — 2026-11-17
 
 Adopts the plugin-directory publishing contract, following `dsh-plugin-share`.

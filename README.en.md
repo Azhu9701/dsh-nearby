@@ -38,6 +38,7 @@ NextSeat shrinks it to one step: **open a room and hand over the QR code.**
 | File transfer | Up to 2 GiB per file, automatic 32 MB chunked uploads, SHA-256 verification, streaming to disk |
 | Prompt cards | Plain-JSON cards (title / tags / body / author), render-only, one-click import into your prompt library |
 | Skill packs | Package a local skill directory as a zip; recipients can install it into `~/.dsh/skills` with path-traversal and symlink checks |
+| Plugin packs | Tick installed plugins and get one `NSP1-…` code (a couple of plugins is ~136 characters); the other side pastes it, previews, and installs |
 | Room notes | Host and guests can leave a line, visible to everyone like a whiteboard |
 | Nearby discovery | Other NextSeat instances on the same Wi-Fi show up under "Nearby" — one click to join, no QR needed |
 | Remote host | Optional Cloudflare quick tunnel when you are away; the room gets an https link for people on site |
@@ -70,6 +71,17 @@ Reload when prompted (or press the refresh button in the sidebar), then open the
 
 ![Demo](assets/demo.gif)
 
+### Share plugins: one code, a whole setup
+
+Anyone in the room can hand over the plugin set they tuned, not just files:
+
+1. Click **Share plugins**, tick what to give (anything installed from `link:`/`file:` is skipped — the other machine cannot use it), then **Generate code**.
+2. The result is one `NSP1-…` string: JSON, deflate, base64url. **Two plugins out of 31 came to 136 characters**, so it travels in a single chat message.
+3. The other side clicks **Receive a pack**, pastes the code, hits **See what it installs** — a preview lists install / enable / manual-upgrade / already-installed — and only then **Install into my DSH**.
+4. A restart notice tells them when to reload DSH; the guest page can also copy the code for a nearby DSH user.
+
+Preview is a hard gate: look first, install second. DSH's installer refuses to "upgrade", so a version mismatch is reported as a manual step rather than silently downgraded.
+
 ## How it works
 
 ```mermaid
@@ -91,7 +103,7 @@ flowchart LR
 | Tool | Purpose |
 | --- | --- |
 | `nearby_room` | Status / open / close; `status` lists who nearby has a room open |
-| `nearby_share` | Share a file, prompt card, skill pack or note into the room |
+| `nearby_share` | Share a file, prompt card, skill pack, plugin pack or note into the room |
 | `nearby_inbox` | Read what is in the room (files, cards, skill packs, notes) |
 
 Example: ask the agent to "open a room and share this skill with the people here" — it calls `nearby_room` to open, `nearby_share` to package the skill, and replies with the room code and link.

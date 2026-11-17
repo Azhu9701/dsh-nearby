@@ -100,6 +100,19 @@ window.__ModuleLoader__.load({
       .dn-skills { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow: auto; }
       .dn-skill { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; }
       .dn-skill-main { min-width: 0; flex: 1; }
+      .dn-plug { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; }
+      .dn-plug.pick { border-color: var(--dsw-alias-brand-primary); }
+      .dn-plug input { margin-top: 3px; accent-color: var(--dsw-alias-brand-primary); }
+      .dn-plug-main { min-width: 0; flex: 1; }
+      .dn-code {
+        font-family: var(--dsw-alias-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+        font-size: 11.5px; line-height: 1.5; color: var(--dsw-alias-label-secondary);
+        background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l1);
+        border-radius: 8px; padding: 8px 10px; margin-top: 10px;
+        max-height: 110px; overflow: auto; word-break: break-all; white-space: pre-wrap;
+      }
+      .dn-pack-rows { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow: auto; }
+      .dn-pack-row { display: flex; gap: 8px; justify-content: space-between; font-size: 12.5px; }
 
       .dn-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
       .dn-check {
@@ -264,6 +277,13 @@ window.__ModuleLoader__.load({
       const [skills, setSkills] = useState(null)
       const [showSkills, setShowSkills] = useState(false)
       const [skillQuery, setSkillQuery] = useState('')
+      const [showPacks, setShowPacks] = useState(false)
+      const [packs, setPacks] = useState(null)
+      const [packPick, setPackPick] = useState({})
+      const [packCode, setPackCode] = useState('')
+      const [showRecv, setShowRecv] = useState(false)
+      const [recvCode, setRecvCode] = useState('')
+      const [recvPreview, setRecvPreview] = useState(null)
       const [remotely] = useState(isRemoteClient)
       const [remote, setRemote] = useState(remotely)
       const fileRef = useRef(null)
@@ -473,6 +493,111 @@ window.__ModuleLoader__.load({
           say('已装进技能库：' + (d.title || d.id))
         } catch (e) {
           say(e.message || '安装失败', true)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      /* 插件包：把本机已装的插件导出成一串码，别人粘进自己的 DSH 就能装回。 */
+
+      async function loadPacks() {
+        try {
+          const d = await call('/plugins')
+          setPacks(d)
+        } catch (e) {
+          say(e.message || '读不到插件列表', true)
+          setPacks({ available: false, entries: [], skipped: [] })
+        }
+      }
+
+      function togglePack(name) {
+        setPackPick((prev) => {
+          const next = Object.assign({}, prev)
+          if (next[name]) delete next[name]
+          else next[name] = true
+          return next
+        })
+      }
+
+      async function exportPacks() {
+        const names = Object.keys(packPick)
+        if (!names.length) {
+          say('先勾几个插件', true)
+          return
+        }
+        setBusy(true)
+        try {
+          const d = await call('/export-plugins', {
+            method: 'POST',
+            body: JSON.stringify({ names }),
+          })
+          setPackCode(d.code || '')
+          say('插件码好了：' + d.count + ' 个插件，' + d.chars + ' 个字符')
+        } catch (e) {
+          say(e.message || '生成插件码失败', true)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      async function putPackInRoom() {
+        if (!packCode) return
+        setBusy(true)
+        try {
+          await call('/share-pack', { method: 'POST', body: JSON.stringify({ code: packCode }) })
+          say('插件包已经放进房间了')
+          await refresh()
+        } catch (e) {
+          say(e.message || '放不进房间', true)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      async function previewPack(code) {
+        setBusy(true)
+        try {
+          const d = await call('/preview-plugins', {
+            method: 'POST',
+            body: JSON.stringify({ code }),
+          })
+          setRecvPreview(d)
+          if (!d.rows || !d.rows.length) say('没有可装的插件')
+        } catch (e) {
+          setRecvPreview(null)
+          say(e.message || '这串码读不出来', true)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      async function applyPack() {
+        if (!recvCode.trim()) return
+        setBusy(true)
+        try {
+          const d = await call('/apply-plugins', {
+            method: 'POST',
+            body: JSON.stringify({ code: recvCode.trim() }),
+          })
+          const rows = d.done || []
+          const failed = rows.filter((r) => !r.ok)
+          if (failed.length) {
+            const f = failed[0]
+            say(f.name + ' 没装上：' + (f.error || '原因不明'), true)
+            if (failed.length < rows.length) refresh()
+            return
+          }
+          const okCount = rows.length
+          say(
+            okCount
+              ? '装好了 ' + okCount + ' 个插件' + (d.restart ? '，重启 DSH 后生效' : '')
+              : '这些插件本机都有，不用装',
+          )
+          setRecvPreview(null)
+          setRecvCode('')
+          refresh()
+        } catch (e) {
+          say(e.message || '装失败了', true)
         } finally {
           setBusy(false)
         }
@@ -857,6 +982,18 @@ window.__ModuleLoader__.load({
                 },
                 showSkills ? '收起技能' : '分享一个技能',
               ),
+              h(
+                'button',
+                {
+                  className: 'dn-btn ghost',
+                  onClick: () => {
+                    const next = !showPacks
+                    setShowPacks(next)
+                    if (next && !packs) loadPacks()
+                  },
+                },
+                showPacks ? '收起插件' : '分享插件',
+              ),
               h('input', {
                 ref: fileRef,
                 type: 'file',
@@ -911,6 +1048,151 @@ window.__ModuleLoader__.load({
                             ),
                           ),
                         ),
+                )
+              : null,
+            showPacks
+              ? h(
+                  'div',
+                  { className: 'dn-skills' },
+                  h(
+                    'p',
+                    { className: 'dn-hint', style: { margin: '10px 0 0' } },
+                    '勾几个插件，生成一串码——别人粘进自己的 DSH 就能装回同样的插件。',
+                  ),
+                  !packs
+                    ? h('div', { className: 'dn-hint' }, '读插件列表…')
+                    : packs.available === false
+                      ? h('div', { className: 'dn-hint' }, '这台机器的 DSH 没有插件管理服务')
+                      : packs.entries.length === 0
+                        ? h('div', { className: 'dn-hint' }, '没有能分享的插件（本地链接安装的插件别人装不了）')
+                        : h(
+                            'div',
+                            { className: 'dn-pack-rows' },
+                            packs.entries.map((p) =>
+                              h(
+                                'label',
+                                { className: 'dn-plug' + (packPick[p.name] ? ' pick' : ''), key: p.name },
+                                h('input', {
+                                  type: 'checkbox',
+                                  checked: !!packPick[p.name],
+                                  onChange: () => togglePack(p.name),
+                                }),
+                                h(
+                                  'div',
+                                  { className: 'dn-plug-main' },
+                                  h('div', { className: 'dn-t1' }, p.title || p.name),
+                                  h(
+                                    'div',
+                                    { className: 'dn-meta' },
+                                    p.name + (p.version ? '@' + p.version : '') + (p.enabled === false ? ' · 已停用' : ''),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                  packs && packs.entries && packs.entries.length
+                    ? h(
+                        'div',
+                        { style: { display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6 } },
+                        h(
+                          'button',
+                          { className: 'dn-btn primary small', disabled: busy, onClick: exportPacks },
+                          '生成插件码',
+                        ),
+                        h(
+                          'button',
+                          { className: 'dn-btn ghost small', onClick: showRecv ? null : () => setShowRecv(true) },
+                          showRecv ? '收插件包就在下面' : '我要收别人的',
+                        ),
+                      )
+                    : null,
+                  packs && packs.skipped && packs.skipped.length
+                    ? h(
+                        'div',
+                        { className: 'dn-hint', style: { marginTop: 8 } },
+                        packs.skipped.length + ' 个本地链接安装的插件没法分享',
+                      )
+                    : null,
+                  packCode
+                    ? h(
+                        'div',
+                        null,
+                        h('div', { className: 'dn-code' }, packCode),
+                        h(
+                          'div',
+                          { style: { display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 8 } },
+                          h(
+                            'button',
+                            { className: 'dn-btn ghost small', onClick: () => copy(packCode, '插件码') },
+                            '复制插件码',
+                          ),
+                          h(
+                            'button',
+                            { className: 'dn-btn primary small', disabled: busy, onClick: putPackInRoom },
+                            '放进房间',
+                          ),
+                        ),
+                      )
+                    : null,
+                )
+              : null,
+            showRecv
+              ? h(
+                  'div',
+                  { className: 'dn-skills' },
+                  h(
+                    'p',
+                    { className: 'dn-hint', style: { margin: '10px 0 0' } },
+                    '把别人给你的插件码粘进来，先看一眼要装什么，再决定装不装。',
+                  ),
+                  h('textarea', {
+                    className: 'dn-textarea',
+                    style: { minHeight: 72, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 },
+                    placeholder: 'NSP1-…',
+                    value: recvCode,
+                    onChange: (e) => {
+                      setRecvCode(e.target.value)
+                      setRecvPreview(null)
+                    },
+                  }),
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 8 } },
+                    h(
+                      'button',
+                      {
+                        className: 'dn-btn ghost small',
+                        disabled: busy || !recvCode.trim(),
+                        onClick: () => previewPack(recvCode.trim()),
+                      },
+                      '看看要装什么',
+                    ),
+                    recvPreview && recvPreview.rows && recvPreview.rows.some((r) => r.action === 'install' || r.action === 'enable')
+                      ? h(
+                          'button',
+                          { className: 'dn-btn primary small', disabled: busy, onClick: applyPack },
+                          '装进我的 DSH',
+                        )
+                      : null,
+                  ),
+                  recvPreview && recvPreview.rows
+                    ? h(
+                        'div',
+                        { className: 'dn-pack-rows' },
+                        recvPreview.rows.map((r) =>
+                          h(
+                            'div',
+                            { className: 'dn-pack-row', key: r.name },
+                            h(
+                              'span',
+                              null,
+                              r.name + (r.version ? '@' + r.version : '') + ' · ' + r.note,
+                              r.action === 'skip' ? '' : ' → ' + (r.action === 'enable' ? '启用' : r.action === 'install' ? '装' : '需手动升级'),
+                            ),
+                          ),
+                        ),
+                      )
+                    : null,
                 )
               : null,
             uploads.length
@@ -1024,7 +1306,7 @@ window.__ModuleLoader__.load({
                     h(
                       'div',
                       { className: 'dn-item' + (it.dir === 'to-guests' ? ' host' : ''), key: it.id },
-                      h('div', { className: 'dn-ico' }, it.kind === 'file' ? '▤' : it.kind === 'note' ? '“' : it.kind === 'skill' ? '⌘' : '✎'),
+                      h('div', { className: 'dn-ico' }, it.kind === 'file' ? '▤' : it.kind === 'note' ? '“' : it.kind === 'skill' ? '⌘' : it.kind === 'pack' ? '⊕' : '✎'),
                       h(
                         'div',
                         { className: 'dn-bd' },
@@ -1076,7 +1358,22 @@ window.__ModuleLoader__.load({
                                     },
                                     '保存',
                                   )
-                                : null,
+                                : it.kind === 'pack'
+                                  ? h(
+                                      'button',
+                                      {
+                                        className: 'dn-btn primary small',
+                                        disabled: busy,
+                                        onClick: () => {
+                                          setShowPacks(false)
+                                          setShowRecv(true)
+                                          setRecvCode(it.pack && it.pack.code ? it.pack.code : '')
+                                          previewPack(it.pack && it.pack.code ? it.pack.code : '')
+                                        },
+                                      },
+                                      '装进我的 DSH',
+                                    )
+                                  : null,
                           it.kind === 'file'
                             ? h(
                                 'button',
