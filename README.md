@@ -152,6 +152,19 @@ node --check client.js
 
 插件结构：`index.js`（Host：路由 / 房间 / 隧道 / Agent 工具）、`client.js`（DSH 侧栏面板）、`guest.html`（手机访客页，零安装）、`cordis.patch.yml`（bundle 挂载）、`vendor/qrcode.cjs`（二维码生成）。
 
+
+## 赞助
+
+本仓库当前由 [采了么 AI 中转](https://ai.caileme.top) 赞助展示位。
+
+<p align="center">
+  <a href="https://ai.caileme.top">
+    <img src="assets/sponsors/caileme-banner-github-1200x200-sponsor.png" alt="采了么 AI 中转 · 稳定好用的大模型 API" width="1200">
+  </a>
+</p>
+
+更多尺寸与深色 / 浅色版本见 [assets/sponsors](assets/sponsors)。
+
 ## License
 
 [MIT](LICENSE)

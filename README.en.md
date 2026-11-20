@@ -152,6 +152,19 @@ node --check client.js
 
 Layout: `index.js` (Host: routes / rooms / tunnel / Agent tools), `client.js` (DSH sidebar panel), `guest.html` (zero-install phone page), `cordis.patch.yml` (bundle mount), `vendor/qrcode.cjs` (QR generation).
 
+
+## Sponsors
+
+This repository currently features a sponsor slot from [Caileme AI Hub](https://ai.caileme.top).
+
+<p align="center">
+  <a href="https://ai.caileme.top">
+    <img src="assets/sponsors/caileme-banner-github-1200x200-sponsor.png" alt="Caileme AI Hub — stable large-model API" width="1200">
+  </a>
+</p>
+
+More sizes and dark / light variants live under [assets/sponsors](assets/sponsors).
+
 ## License
 
 [MIT](LICENSE)
