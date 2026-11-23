@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0
+
+- 新增「有分享码？」入口：在面板里填 4 位房间码，自动匹配同一 Wi-Fi 下附近的房间并打开；也可以直接粘完整房间链接。
+- 新增本地插件分享：以目录方式安装的插件（`link:` / `file:`）可以整包放进房间，对方下载后一键装成本地插件。
+- 新增 `/dsh-nearby/api/local-plugins`、`/share-local-plugin`、`/install-local-plugin`、`/match-room` 四个宿主接口。
+- 访客页支持插件包条目与下载。
+
 ## 0.6.3 — 2026-11-17
 
 Share **plugins**, not just files — the thing the person next to you usually wants most.

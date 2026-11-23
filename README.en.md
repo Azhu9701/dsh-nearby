@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-37E3B5.svg)](LICENSE)
 [![DSH Plugin](https://img.shields.io/badge/DSH-plugin-0A0F0E.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![Version](https://img.shields.io/badge/version-0.6.1-37E3B5.svg)](https://github.com/Azhu9701/dsh-nearby/releases)
+[![Version](https://img.shields.io/badge/version-0.7.0-37E3B5.svg)](https://github.com/Azhu9701/dsh-nearby/releases)
 
 [中文](README.md) · [English](README.en.md)
 
@@ -39,6 +39,8 @@ NextSeat shrinks it to one step: **open a room and hand over the QR code.**
 | Prompt cards | Plain-JSON cards (title / tags / body / author), render-only, one-click import into your prompt library |
 | Skill packs | Package a local skill directory as a zip; recipients can install it into `~/.dsh/skills` with path-traversal and symlink checks |
 | Plugin packs | Tick installed plugins and get one `NSP1-…` code (a couple of plugins is ~136 characters); the other side pastes it, previews, and installs |
+| Local plugin sharing | Plugins installed from a folder (`link:` / `file:`) can be packed whole into the room; the other side downloads and installs them as a local plugin in one click |
+| Join by share code | Type the 4-digit room code in the panel to match a room on the same Wi-Fi, or paste the full link |
 | Room notes | Host and guests can leave a line, visible to everyone like a whiteboard |
 | Nearby discovery | Other NextSeat instances on the same Wi-Fi show up under "Nearby" — one click to join, no QR needed |
 | Remote host | Optional Cloudflare quick tunnel when you are away; the room gets an https link for people on site |

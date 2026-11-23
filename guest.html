@@ -330,7 +330,7 @@
 
     var ico = document.createElement('div');
     ico.className = 'ico';
-    ico.textContent = it.kind === 'file' ? '▤' : it.kind === 'note' ? '“' : it.kind === 'skill' ? '⌘' : it.kind === 'pack' ? '⊕' : '✎';
+    ico.textContent = it.kind === 'file' ? '▤' : it.kind === 'note' ? '“' : it.kind === 'skill' ? '⌘' : it.kind === 'pack' ? '⊕' : it.kind === 'plugin' ? '⚙' : '✎';
     row.appendChild(ico);
 
     var bd = document.createElement('div');
@@ -347,7 +347,7 @@
     who.className = 'to';
     who.textContent = it.dir === 'to-guests' ? (it.from || '主持人') : (it.from || '访客');
     meta.appendChild(who);
-    meta.appendChild(document.createTextNode(' · ' + fmtTime(it.at) + (it.kind === 'file' || it.kind === 'skill' ? ' · ' + fmtSize(it.size) : '')));
+    meta.appendChild(document.createTextNode(' · ' + fmtTime(it.at) + (it.kind === 'file' || it.kind === 'skill' || it.kind === 'plugin' ? ' · ' + fmtSize(it.size) : '')));
     bd.appendChild(meta);
 
     if (it.tags && it.tags.length) {
@@ -459,6 +459,25 @@
       };
       acts4.appendChild(pbtn);
       bd.appendChild(acts4);
+    } else if (it.kind === 'plugin') {
+      if (it.preview) {
+        var pp = document.createElement('div');
+        pp.className = 'prev';
+        pp.textContent = String(it.preview).slice(0, 200);
+        bd.appendChild(pp);
+      }
+      var plh = document.createElement('div');
+      plh.className = 'prev';
+      plh.textContent = '本地插件整包。装了 DSH 的人下载后，在「邻座」面板的房间里点「装成本地插件」就能装回。';
+      bd.appendChild(plh);
+      var acts5 = document.createElement('div');
+      acts5.className = 'acts';
+      var a5 = document.createElement('a');
+      a5.href = API + '/download/' + encodeURIComponent(it.id) + q();
+      a5.textContent = '下载插件包';
+      a5.setAttribute('download', '');
+      acts5.appendChild(a5);
+      bd.appendChild(acts5);
     } else if (it.kind === 'file') {
       var acts2 = document.createElement('div');
       acts2.className = 'acts';

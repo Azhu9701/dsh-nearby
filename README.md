@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-37E3B5.svg)](LICENSE)
 [![DSH Plugin](https://img.shields.io/badge/DSH-plugin-0A0F0E.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![Version](https://img.shields.io/badge/version-0.6.1-37E3B5.svg)](https://github.com/Azhu9701/dsh-nearby/releases)
+[![Version](https://img.shields.io/badge/version-0.7.0-37E3B5.svg)](https://github.com/Azhu9701/dsh-nearby/releases)
 
 [中文](README.md) · [English](README.en.md)
 
@@ -39,6 +39,8 @@
 | 提示词卡片 | 纯 JSON 卡片（标题 / 标签 / 正文 / 作者），只渲染不执行，可一键导入提示词库 |
 | 技能包分享 | 本机技能目录打包成 zip 进房间；收到后可一键装进 `~/.dsh/skills`（校验路径穿越与符号链接）|
 | 插件包分享 | 勾选本机已装插件，生成一串 `NSP1-…` 插件码（几十个插件也只有几百字符）；对方粘进面板，预览后一键装回 |
+| 本地插件分享 | 以目录方式安装（`link:` / `file:`）的插件可以整包放进房间，对方下载后一键装成本地插件 |
+| 分享码进房 | 在面板里填 4 位房间码，自动匹配同一 Wi-Fi 下的房间并打开；也可以直接粘完整链接 |
 | 房间留言 | 宿主与访客都能留一句话，像白板一样即时可见 |
 | 就近发现 | 同一 Wi-Fi 下开着邻座的实例自动出现在「附近的人」，一键进房，连扫码都省了 |
 | 远程宿主 | 人不在现场时挂一条 Cloudflare quick tunnel，现场打开 https 链接即可进入 |
@@ -75,7 +77,7 @@ dsh plugin --profile web add github:Azhu9701/dsh-nearby
 
 同一间房里的人，除了文件、提示词、技能，还能把自己调好的**插件组合**递过去：
 
-1. 面板里点 **分享插件**，勾上想给的插件（本地 `link:`/`file:` 安装的会被跳过，因为别人装不了），点 **生成插件码**。
+1. 面板里点 **分享插件**，勾上想给的插件，点 **生成插件码**。本地 `link:`/`file:` 安装的插件没法用插件码，但可以在同一面板的「本机插件」里整包放进房间，对方下载后一键装成本地插件。
 2. 得到的是一串 `NSP1-…`：JSON 打包再 deflate + base64url，**31 个插件里挑 2 个只有 136 个字符**，微信里发一句话就能带过去。
 3. 对方在邻座面板点 **我要收别人的**，粘进这串码 → **看看要装什么** 先出预览（装 / 启用 / 需手动升级 / 本机已有），确认后才 **装进我的 DSH**。
 4. 装完提示「重启 DSH 后生效」；也可以在访客页直接点 **复制插件码**，发给旁边已经装了 DSH 的人。

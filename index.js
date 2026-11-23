@@ -254,6 +254,7 @@ function publicItem(it) {
   const card = it.card
   const skill = it.kind === 'skill' ? it.skill || {} : null
   const pack = it.kind === 'pack' ? it.pack || {} : null
+  const plugin = it.kind === 'plugin' ? it.plugin || {} : null
   const noteText = it.kind === 'note' ? String(it.text || '') : ''
   return {
     id: it.id,
@@ -268,7 +269,9 @@ function publicItem(it) {
             ? skill.name || it.name
             : it.kind === 'pack'
               ? '插件包 · ' + (pack.count || 0) + ' 个插件'
-              : it.name,
+              : it.kind === 'plugin'
+                ? plugin.name || it.name
+                : it.name,
     name: it.name || '',
     size: it.size || 0,
     sha256: it.sha256 ? it.sha256.slice(0, 16) : '',
@@ -281,11 +284,14 @@ function publicItem(it) {
         ? String(skill.description || '').slice(0, 200)
         : it.kind === 'pack'
           ? (pack.names || []).slice(0, 12).join(' · ')
-          : noteText.slice(0, 200),
+          : it.kind === 'plugin'
+            ? String(plugin.description || '').slice(0, 200)
+            : noteText.slice(0, 200),
     text: it.kind === 'note' ? noteText.slice(0, 400) : '',
     truncated: it.kind === 'note' ? noteText.length > 400 : false,
     skill,
     pack,
+    plugin,
   }
 }
 
@@ -1827,6 +1833,188 @@ async function applyPlugins(ctx, rows, { enableOnly = false } = {}) {
   return { done, restart }
 }
 
+/* ------------------------------------------------------------------ */
+/* local plugins: hand over a plugin installed from a folder           */
+/* ------------------------------------------------------------------ */
+
+/** `link:` / `file:` / `portal:` spec → 绝对目录。 */
+function localPluginDir(spec) {
+  let raw = String(spec || '').trim()
+  raw = raw.replace(/^(?:link:|file:|portal:)/i, '')
+  if (!raw) return ''
+  if (raw.startsWith('~/')) raw = join(homedir(), raw.slice(2))
+  if (!isAbsolute(raw)) return ''
+  return resolve(raw)
+}
+
+/** 本机以目录方式安装的插件（整包可以递给别人）。 */
+async function localBundles(ctx) {
+  const manager = getPluginManager(ctx)
+  if (!manager) return { available: false, entries: [] }
+  let bundles = []
+  try {
+    bundles = await manager.listBundles()
+  } catch {
+    return { available: false, entries: [] }
+  }
+  const entries = []
+  for (const b of bundles) {
+    if (!b || b.installed !== true || b.removable === false) continue
+    const target = b.installTarget && typeof b.installTarget === 'object' ? b.installTarget : {}
+    const dir = localPluginDir(target.spec || b.source || '')
+    if (!dir) continue
+    let pkg = {}
+    try {
+      pkg = JSON.parse(await fsp.readFile(join(dir, 'package.json'), 'utf8'))
+    } catch {
+      continue
+    }
+    if (!pkg || !pkg.name) continue
+    const st = await skillStats(dir)
+    entries.push({
+      name: String(pkg.name),
+      version: String(pkg.version || ''),
+      title: String(pkg.description || pkg.name).slice(0, 120),
+      description: String(pkg.description || '').slice(0, 200),
+      dir,
+      files: st.files,
+      bytes: st.bytes,
+    })
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name))
+  return { available: true, entries }
+}
+
+/** 把一个本地插件目录打成 zip 放进房间。 */
+async function shareLocalPlugin(r, want, from) {
+  const fail = (code, message) => {
+    const err = new Error(message)
+    err.code = code
+    return err
+  }
+  if (r.items.length >= MAX_ITEMS) throw fail('ROOM_FULL', '房间里的东西太多了')
+  const list = await localBundles(hostCtx)
+  if (!list.available) throw fail('NO_MANAGER', '这台机器的 DSH 没有插件管理服务')
+  const key = String(want || '').trim()
+  const hit = list.entries.find((e) => e.name === key || basename(e.dir) === key)
+  if (!hit) throw fail('NO_PLUGIN', '本机没有这个本地插件：' + key)
+
+  const tmpDir = join(ROOT, 'tmp')
+  await fsp.mkdir(tmpDir, { recursive: true })
+  const zipPath = join(tmpDir, `local-plugin-${randomBytes(5).toString('hex')}.zip`)
+  try {
+    await runCapture(
+      'zip',
+      ['-r', '-q', '-X', zipPath, '.', '-x', '*/node_modules/*', 'node_modules/*', '*/.git/*', '.git/*'],
+      { cwd: hit.dir },
+    )
+    const stat = await fsp.stat(zipPath)
+    if (stat.size > MAX_FILE_BYTES) throw fail('TOO_LARGE', '插件包超过 2 GB 上限')
+    const filesDir = join(r.dir, 'files')
+    await fsp.mkdir(filesDir, { recursive: true })
+    const clean = safeName(`${basename(hit.dir)}.plugin.zip`)
+    const dest = join(filesDir, `${Date.now().toString(36)}-${clean}`)
+    const hasher = makeHasher()
+    await pipeline(createReadStream(zipPath), hasher.stream, createWriteStream(dest))
+    const item = {
+      id: randomBytes(6).toString('hex'),
+      kind: 'plugin',
+      dir: 'to-guests',
+      name: clean,
+      size: hasher.size,
+      sha256: hasher.digest(),
+      at: Date.now(),
+      path: dest,
+      from,
+      plugin: {
+        name: hit.name,
+        version: hit.version,
+        description: hit.description,
+        files: hit.files,
+        bytes: hit.bytes,
+      },
+    }
+    r.items.push(item)
+    return item
+  } finally {
+    void fsp.rm(zipPath, { force: true }).catch(() => {})
+  }
+}
+
+/** 把房间里的本地插件包装进本机 DSH：解压到 storages 下，再交给 pluginManager。 */
+async function installLocalPlugin(item) {
+  const fail = (code, message) => {
+    const err = new Error(message)
+    err.code = code
+    return err
+  }
+  if (!item) throw fail('NOT_PLUGIN', '这不是一个插件包')
+  if (!/\.zip$/i.test(String(item.name || item.path || ''))) {
+    throw fail('NOT_PLUGIN', '这不是一个插件包（需要一个 .zip）')
+  }
+  let entries = []
+  try {
+    entries = (await runCapture('zipinfo', ['-1', item.path]))
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  } catch {
+    throw fail('BAD_ZIP', '插件包读不出来')
+  }
+  if (!entries.length) throw fail('BAD_ZIP', '插件包是空的')
+  for (const name of entries) {
+    if (name.startsWith('/') || name.split('/').includes('..')) {
+      throw fail('BAD_ZIP', '插件包里有可疑路径：' + name)
+    }
+  }
+  const work = join(ROOT, 'tmp', 'plugin-' + randomBytes(6).toString('hex'))
+  await fsp.mkdir(work, { recursive: true })
+  try {
+    await runCapture('unzip', ['-q', '-o', item.path, '-d', work])
+    await assertNoSymlinks(work)
+    let pkg = {}
+    try {
+      pkg = JSON.parse(await fsp.readFile(join(work, 'package.json'), 'utf8'))
+    } catch {
+      throw fail('BAD_PLUGIN', '插件包里没有 package.json')
+    }
+    if (!pkg.name) throw fail('BAD_PLUGIN', '插件包里没有插件名')
+    const hasBundle = !!(pkg.dsh && pkg.dsh.bundle)
+    let hasPatch = true
+    try {
+      await fsp.stat(join(work, 'cordis.patch.yml'))
+    } catch {
+      hasPatch = false
+    }
+    if (!hasBundle && !hasPatch) throw fail('BAD_PLUGIN', '这不是一个 DSH 插件（缺 dsh.bundle / cordis.patch.yml）')
+    const manager = getPluginManager(hostCtx)
+    if (!manager) throw fail('NO_MANAGER', '这台机器的 DSH 没有插件管理服务')
+    const pluginsRoot = join(ROOT, 'plugins')
+    await fsp.mkdir(pluginsRoot, { recursive: true })
+    const id = safeName(String(pkg.name).replace(/^@/, '').replace(/[\\/]/g, '__'))
+    const target = join(pluginsRoot, id)
+    let exists = true
+    try {
+      await fsp.stat(target)
+    } catch {
+      exists = false
+    }
+    if (exists) throw fail('ALREADY_THERE', '本机已经有同名插件：' + pkg.name)
+    await fsp.cp(work, target, { recursive: true })
+    const result = await manager.installBundle(target, { enabled: true })
+    return {
+      ok: !result || result.application !== 'failed',
+      name: pkg.name,
+      version: String(pkg.version || ''),
+      installedTo: target,
+      application: String((result && result.application) || 'applied'),
+      error: result && result.error ? errText(result.error) : '',
+    }
+  } finally {
+    void fsp.rm(work, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 function qrDataUrl(text) {
   const qr = qrcode(0, 'M')
   qr.addData(text)
@@ -2132,7 +2320,7 @@ async function handleGuest(req, res) {
 
   if (action === 'download' && req.method === 'GET' && seg[4]) {
     const item = r.items.find((i) => i.id === seg[4])
-    if (!item || (item.kind !== 'file' && item.kind !== 'skill') || !item.path) {
+    if (!item || (item.kind !== 'file' && item.kind !== 'skill' && item.kind !== 'plugin') || !item.path) {
       sendJson(res, 404, { ok: false, error: 'not-found' })
       return
     }
@@ -2554,6 +2742,149 @@ async function hostSharePack(req, res) {
   }
 }
 
+/* 本地插件：整包放进房间 / 装回本机 */
+
+async function hostLocalPlugins(req, res) {
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+  if (!hostHeaderOk(req)) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  try {
+    const out = await localBundles(hostCtx)
+    sendJson(res, 200, { ok: true, ...out })
+  } catch (err) {
+    sendJson(res, 500, { ok: false, error: 'list-failed', detail: String(err && err.message) })
+  }
+}
+
+async function hostShareLocalPlugin(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+  if (!hostHeaderOk(req)) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  if (!room) {
+    sendJson(res, 409, { ok: false, error: 'no-room' })
+    return
+  }
+  let body = {}
+  try {
+    body = await readJsonBody(req, 16 * 1024)
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'bad-request' })
+    return
+  }
+  try {
+    const item = await shareLocalPlugin(room, body.name, room.hostName)
+    sendJson(res, 200, { ok: true, item: publicItem(item) })
+  } catch (err) {
+    const code = err && err.code
+    if (code === 'NO_PLUGIN') sendJson(res, 404, { ok: false, error: err.message })
+    else if (code === 'NO_MANAGER') sendJson(res, 501, { ok: false, error: err.message })
+    else if (code === 'ROOM_FULL') sendJson(res, 507, { ok: false, error: '房间里的东西太多了' })
+    else if (code === 'TOO_LARGE') sendJson(res, 413, { ok: false, error: err.message })
+    else sendJson(res, 500, { ok: false, error: '打包插件时出错了' })
+  }
+}
+
+async function hostInstallLocalPlugin(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+  if (!hostHeaderOk(req)) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  if (!room) {
+    sendJson(res, 409, { ok: false, error: 'no-room' })
+    return
+  }
+  let body = {}
+  try {
+    body = await readJsonBody(req, 16 * 1024)
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'bad-request' })
+    return
+  }
+  const item = room.items.find(
+    (it) => it.id === body.id && (it.kind === 'plugin' || /\.zip$/i.test(String(it.name || ''))),
+  )
+  if (!item) {
+    sendJson(res, 404, { ok: false, error: '房间里没有这个插件包' })
+    return
+  }
+  try {
+    const out = await installLocalPlugin(item)
+    sendJson(res, 200, { ok: true, ...out })
+  } catch (err) {
+    const code = err && err.code
+    if (code === 'ALREADY_THERE') sendJson(res, 409, { ok: false, error: err.message })
+    else if (code === 'NO_MANAGER') sendJson(res, 501, { ok: false, error: err.message })
+    else if (code === 'NOT_PLUGIN' || code === 'BAD_ZIP' || code === 'BAD_PLUGIN') {
+      sendJson(res, 400, { ok: false, error: err.message })
+    } else sendJson(res, 500, { ok: false, error: errText(err) })
+  }
+}
+
+/* 分享码：按 4 位房间码在附近找房间 */
+
+async function hostMatchRoom(req, res) {
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+  if (!hostHeaderOk(req)) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  const u = new URL(req.url || '/', 'http://localhost')
+  const raw = String(u.searchParams.get('code') || '').trim()
+  if (!raw) {
+    sendJson(res, 400, { ok: false, error: '分享码是空的' })
+    return
+  }
+  if (/^https?:\/\//i.test(raw)) {
+    sendJson(res, 200, { ok: true, found: true, joinUrl: raw, external: true })
+    return
+  }
+  const code = raw.replace(/\s+/g, '').replace(/^#/, '')
+  if (!/^\d{4}$/.test(code)) {
+    sendJson(res, 400, { ok: false, error: '分享码是 4 位数字' })
+    return
+  }
+  if (room && room.code === code) {
+    sendJson(res, 200, {
+      ok: true,
+      found: true,
+      self: true,
+      joinUrl: room.joinUrl,
+      hostName: room.hostName,
+      name: room.name || '',
+    })
+    return
+  }
+  const peer = nearbySnapshot().peers.find((p) => p.room && p.room.code === code)
+  if (!peer) {
+    sendJson(res, 200, { ok: true, found: false })
+    return
+  }
+  sendJson(res, 200, {
+    ok: true,
+    found: true,
+    joinUrl: peer.room.joinUrl,
+    hostName: peer.room.hostName || peer.name,
+    name: peer.room.name || '',
+  })
+}
+
 async function hostNote(req, res) {
   if (req.method !== 'POST') {
     sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
@@ -2796,6 +3127,14 @@ function describeItem(it) {
     const sk = it.skill || {}
     return `[技能 · ${who}] ${sk.name || it.name}（${sk.files || 0} 个文件）\n${String(sk.description || '').slice(0, 240)}\n技能包 ${it.path}`
   }
+  if (it.kind === 'plugin') {
+    const pl = it.plugin || {}
+    return `[本地插件 · ${who}] ${pl.name || it.name}${pl.version ? '@' + pl.version : ''}（${pl.files || 0} 个文件）\n${String(pl.description || '').slice(0, 240)}\n插件包 ${it.path}`
+  }
+  if (it.kind === 'pack') {
+    const pk = it.pack || {}
+    return `[插件包 · ${who}] ${pk.count || 0} 个插件：${(pk.names || []).join(', ')}\n插件码 ${pk.code}`
+  }
   return `[文件 · ${who}] ${it.name}（${fmtBytes(it.size)}）\n本地路径 ${it.path}\nsha256 ${String(it.sha256 || '').slice(0, 16)}`
 }
 
@@ -2846,11 +3185,11 @@ function buildTools() {
     {
       name: 'nearby_share',
       description:
-        '往当前邻座房间里放东西，房间里所有人（手机浏览器）立刻能看到：kind=note 发一句话（text）；kind=card 放一张提示词卡片（title/tags/body）；kind=file 把本机一个文件放进房间（path）；kind=skill 把本机技能库里的一个技能打包放进房间（skill 传技能目录名或 name）；kind=pack 把本机已装插件导出成一串可分享的插件码放进房间（plugins 可选，空格/逗号分隔的插件名，不填就是全部可移植插件）。没有开房时先用 nearby_room 开一间。',
+        '往当前邻座房间里放东西，房间里所有人（手机浏览器）立刻能看到：kind=note 发一句话（text）；kind=card 放一张提示词卡片（title/tags/body）；kind=file 把本机一个文件放进房间（path）；kind=skill 把本机技能库里的一个技能打包放进房间（skill 传技能目录名或 name）；kind=pack 把本机已装插件导出成一串可分享的插件码放进房间（plugins 可选，空格/逗号分隔的插件名，不填就是全部可移植插件）；kind=plugin 把本机以目录方式安装的插件整包放进房间（plugin 传插件名，比如 @local/insight-deck）。没有开房时先用 nearby_room 开一间。',
       parameters: {
         type: 'object',
         properties: {
-          kind: { type: 'string', enum: ['note', 'card', 'file', 'skill', 'pack'] },
+          kind: { type: 'string', enum: ['note', 'card', 'file', 'skill', 'pack', 'plugin'] },
           text: { type: 'string', description: 'note 的正文，最多 2000 字' },
           title: { type: 'string', description: 'card 的标题' },
           tags: { type: 'string', description: 'card 的标签，用空格或逗号分开' },
@@ -2861,6 +3200,7 @@ function buildTools() {
             type: 'string',
             description: 'pack 要分享的插件名，用空格或逗号分开；不填就分享本机全部可移植插件',
           },
+          plugin: { type: 'string', description: 'plugin 的本地插件名，比如 @local/insight-deck' },
         },
         required: ['kind'],
         additionalProperties: false,
@@ -2911,7 +3251,13 @@ function buildTools() {
               text: `插件包已放进房间：${item.pack.count} 个插件（${code.length} 个字符）。\n${names}\n对方装了 DSH 的话，把这串码粘进邻座面板就能装回。`,
             }
           }
-          return { text: 'kind 只能是 note / card / file / skill / pack。' }
+          if (kind === 'plugin') {
+            const item = await shareLocalPlugin(room, args.plugin || args.text, room.hostName)
+            return {
+              text: `本地插件已放进房间：${item.plugin.name}@${item.plugin.version || '?'}（${fmtBytes(item.size)}）。对方下载后在邻座面板里点「装成本地插件」就能装回。`,
+            }
+          }
+          return { text: 'kind 只能是 note / card / file / skill / pack / plugin。' }
         } catch (err) {
           return { text: '没放进去：' + errText(err) }
         }
@@ -2965,6 +3311,10 @@ export function apply(ctx) {
     ['/dsh-nearby/api/preview-plugins', hostPreviewPlugins],
     ['/dsh-nearby/api/apply-plugins', hostApplyPlugins],
     ['/dsh-nearby/api/share-pack', hostSharePack],
+    ['/dsh-nearby/api/local-plugins', hostLocalPlugins],
+    ['/dsh-nearby/api/share-local-plugin', hostShareLocalPlugin],
+    ['/dsh-nearby/api/install-local-plugin', hostInstallLocalPlugin],
+    ['/dsh-nearby/api/match-room', hostMatchRoom],
   ]
 
   for (const [path, handler] of routes) {

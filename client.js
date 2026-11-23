@@ -283,6 +283,7 @@ window.__ModuleLoader__.load({
       const [packCode, setPackCode] = useState('')
       const [showRecv, setShowRecv] = useState(false)
       const [recvCode, setRecvCode] = useState('')
+      const [joinCode, setJoinCode] = useState('')
       const [recvPreview, setRecvPreview] = useState(null)
       const [remotely] = useState(isRemoteClient)
       const [remote, setRemote] = useState(remotely)
@@ -502,11 +503,15 @@ window.__ModuleLoader__.load({
 
       async function loadPacks() {
         try {
-          const d = await call('/plugins')
-          setPacks(d)
+          const [d, lp] = await Promise.all([call('/plugins'), call('/local-plugins')])
+          setPacks(
+            Object.assign({}, d, {
+              local: lp && lp.available ? lp.entries || [] : [],
+            }),
+          )
         } catch (e) {
           say(e.message || '读不到插件列表', true)
-          setPacks({ available: false, entries: [], skipped: [] })
+          setPacks({ available: false, entries: [], skipped: [], local: [] })
         }
       }
 
@@ -549,6 +554,68 @@ window.__ModuleLoader__.load({
           await refresh()
         } catch (e) {
           say(e.message || '放不进房间', true)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      async function shareLocalPluginInRoom(plugin) {
+        setBusy(true)
+        try {
+          const d = await call('/share-local-plugin', {
+            method: 'POST',
+            body: JSON.stringify({ name: plugin.name }),
+          })
+          say('已把「' + (plugin.title || plugin.name) + '」放进房间')
+          if (d && d.item) refresh()
+        } catch (e) {
+          say(e.message || '放进房间失败', true)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      async function installLocalPluginItem(item) {
+        setBusy(true)
+        try {
+          const d = await call('/install-local-plugin', {
+            method: 'POST',
+            body: JSON.stringify({ id: item.id }),
+          })
+          say(
+            d.application === 'restart-required'
+              ? '装好了，重启 DSH 后生效'
+              : '已装成本地插件：' + (d.name || item.title || ''),
+          )
+          refresh()
+        } catch (e) {
+          say(e.message || '装失败', true)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      async function joinByCode() {
+        const code = joinCode.trim()
+        if (!code) {
+          say('先填分享码', true)
+          return
+        }
+        if (/^https?:\/\//i.test(code)) {
+          window.open(code, '_blank', 'noopener')
+          return
+        }
+        setBusy(true)
+        try {
+          const d = await call('/match-room?code=' + encodeURIComponent(code))
+          if (d && d.found && d.joinUrl) {
+            say(d.self ? '这是你自己开的房间，已打开链接' : '找到了：' + (d.hostName || '邻居') + ' 的房间')
+            window.open(d.joinUrl, '_blank', 'noopener')
+          } else {
+            say('附近没找到这个房间。让对方确认开着房、你们在同一个 Wi-Fi。', true)
+          }
+        } catch (e) {
+          say(e.message || '找不到这个房间', true)
         } finally {
           setBusy(false)
         }
@@ -732,6 +799,39 @@ window.__ModuleLoader__.load({
           'div',
           null,
           nearbyCard(),
+          h(
+            'div',
+            { className: 'dn-card' },
+            h('div', { className: 'dn-h2' }, '有分享码？'),
+            h(
+              'p',
+              { className: 'dn-hint' },
+              '对方把房间码告诉你，填进来就能直接进他的房间；也可以直接粘完整的房间链接。',
+            ),
+            h(
+              'div',
+              { className: 'dn-row', style: { alignItems: 'flex-end' } },
+              h(
+                'div',
+                { className: 'dn-field', style: { flex: 1 } },
+                h('label', { className: 'dn-label' }, '房间码'),
+                h('input', {
+                  className: 'dn-input',
+                  value: joinCode,
+                  maxLength: 300,
+                  placeholder: '4 位房间码，或粘完整链接',
+                  onChange: (e) => setJoinCode(e.target.value),
+                  onKeyDown: (e) => {
+                    if (e.key === 'Enter' && !e.isComposing) {
+                      e.preventDefault()
+                      joinByCode()
+                    }
+                  },
+                }),
+              ),
+              h('button', { className: 'dn-btn primary', disabled: busy, onClick: joinByCode }, '进房间'),
+            ),
+          ),
           h(
             'div',
             { className: 'dn-card' },
@@ -1106,11 +1206,51 @@ window.__ModuleLoader__.load({
                         ),
                       )
                     : null,
-                  packs && packs.skipped && packs.skipped.length
+                  packs && packs.local && packs.local.length
                     ? h(
                         'div',
-                        { className: 'dn-hint', style: { marginTop: 8 } },
-                        packs.skipped.length + ' 个本地链接安装的插件没法分享',
+                        null,
+                        h('div', { className: 'dn-h2', style: { marginTop: 16 } }, '本机插件（整包分享）'),
+                        h(
+                          'p',
+                          { className: 'dn-hint' },
+                          '这些插件装在本地目录里，没法用插件码；可以整包放进房间，对方下载后一键装成本地插件。',
+                        ),
+                        h(
+                          'div',
+                          { className: 'dn-pack-rows' },
+                          packs.local.map((pl) =>
+                            h(
+                              'div',
+                              { className: 'dn-plug', key: pl.name },
+                              h(
+                                'div',
+                                { className: 'dn-plug-main' },
+                                h('div', { className: 'dn-t1' }, pl.title || pl.name),
+                                h(
+                                  'div',
+                                  { className: 'dn-meta' },
+                                  pl.name +
+                                    (pl.version ? '@' + pl.version : '') +
+                                    ' · ' +
+                                    pl.files +
+                                    ' 个文件 · ' +
+                                    fmtSize(pl.bytes),
+                                ),
+                                pl.description ? h('div', { className: 'dn-prev' }, pl.description.slice(0, 140)) : null,
+                              ),
+                              h(
+                                'button',
+                                {
+                                  className: 'dn-btn ghost small',
+                                  disabled: busy,
+                                  onClick: () => shareLocalPluginInRoom(pl),
+                                },
+                                '放进房间',
+                              ),
+                            ),
+                          ),
+                        ),
                       )
                     : null,
                   packCode
@@ -1306,7 +1446,7 @@ window.__ModuleLoader__.load({
                     h(
                       'div',
                       { className: 'dn-item' + (it.dir === 'to-guests' ? ' host' : ''), key: it.id },
-                      h('div', { className: 'dn-ico' }, it.kind === 'file' ? '▤' : it.kind === 'note' ? '“' : it.kind === 'skill' ? '⌘' : it.kind === 'pack' ? '⊕' : '✎'),
+                      h('div', { className: 'dn-ico' }, it.kind === 'file' ? '▤' : it.kind === 'note' ? '“' : it.kind === 'skill' ? '⌘' : it.kind === 'pack' ? '⊕' : it.kind === 'plugin' ? '⚙' : '✎'),
                       h(
                         'div',
                         { className: 'dn-bd' },
@@ -1315,7 +1455,11 @@ window.__ModuleLoader__.load({
                           'div',
                           { className: 'dn-meta' },
                           h('b', null, it.dir === 'to-guests' ? '我 · 发给大家' : '来自 ' + (it.from || '访客')),
-                          ' · ' + fmtTime(it.at) + (it.kind === 'file' || it.kind === 'skill' ? ' · ' + fmtSize(it.size) : ''),
+                          ' · ' +
+                            fmtTime(it.at) +
+                            (it.kind === 'file' || it.kind === 'skill' || it.kind === 'plugin'
+                              ? ' · ' + fmtSize(it.size)
+                              : ''),
                         ),
                         it.tags && it.tags.length
                           ? h(
@@ -1324,7 +1468,7 @@ window.__ModuleLoader__.load({
                               it.tags.map((t) => h('span', { className: 'dn-tag', key: t }, t)),
                             )
                           : null,
-                        (it.kind === 'card' || it.kind === 'skill') && it.preview
+                        (it.kind === 'card' || it.kind === 'skill' || it.kind === 'plugin') && it.preview
                           ? h('div', { className: 'dn-prev' }, it.preview)
                           : null,
                         h(
@@ -1373,7 +1517,18 @@ window.__ModuleLoader__.load({
                                       },
                                       '装进我的 DSH',
                                     )
-                                  : null,
+                                  : it.kind === 'plugin'
+                                    ? h(
+                                        'a',
+                                        {
+                                          className: 'dn-btn primary small',
+                                          href: API + '/file?id=' + encodeURIComponent(it.id),
+                                          style: { textDecoration: 'none' },
+                                          download: it.name,
+                                        },
+                                        '下载插件包',
+                                      )
+                                    : null,
                           it.kind === 'file'
                             ? h(
                                 'button',
@@ -1387,7 +1542,17 @@ window.__ModuleLoader__.load({
                                 },
                                 '复制校验前缀',
                               )
-                            : null,
+                            : it.kind === 'plugin'
+                              ? h(
+                                  'button',
+                                  {
+                                    className: 'dn-btn ghost small',
+                                    disabled: busy,
+                                    onClick: () => installLocalPluginItem(it),
+                                  },
+                                  '装成本地插件',
+                                )
+                              : null,
                           it.kind === 'file' && /\.zip$/i.test(it.name || '')
                             ? h(
                                 'button',
