@@ -2001,7 +2001,13 @@ async function installLocalPlugin(item) {
     }
     if (exists) throw fail('ALREADY_THERE', '本机已经有同名插件：' + pkg.name)
     await fsp.cp(work, target, { recursive: true })
-    const result = await manager.installBundle(target, { enabled: true })
+    let result
+    try {
+      result = await manager.installBundle(target, { enabled: true })
+    } catch (err) {
+      void fsp.rm(target, { recursive: true, force: true }).catch(() => {})
+      throw err
+    }
     return {
       ok: !result || result.application !== 'failed',
       name: pkg.name,
